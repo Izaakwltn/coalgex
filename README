@@ -1,2 +1,5 @@
 # A simple implementation of Regex using NFA matching.
 
+Built on guidelines presented in::
+
+https://swtch.com/~rsc/regexp/regexp1.html
