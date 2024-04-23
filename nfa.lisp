@@ -1,245 +1,237 @@
-;;;; This file is part of Coalgex.
-;;;;
-;;;; package.lisp
-;;;;
-;;;; Copyright Izaak Walton (c) 2023
-;;;; 
-;;;; Coalgex is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
-;;;; Coalgex is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
-;;;; You should have received a copy of the GNU General Public License along with Coalgex. If not, see <https://www.gnu.org/licenses/>. 
-;;;;
+(defpackage #:coalgex (:use
+   #:coalton
+   #:coalton-prelude)
+  (:local-nicknames (#:vec #:coalton-library/vector)
+                    (#:cell #:coalton-library/cell)
+                    (#:state #:coalton-library/monad/state)
+                    (#:math #:coalton-library/math)
+                    (#:str #:coalton-library/string))
+  ;(:export)
+  )
 
 (in-package #:coalgex)
 
-;;;
-;;; Generating an NFA
-;;;
+(named-readtables:in-readtable coalton:coalton)
+
+#+coalton-release
+(cl:declaim #.coalton-impl/settings:*coalton-optimize-library*)
+
+;; first step is building the regex nfa
+;; this should be a structure of nfa nodes which can be traversed to verify the matching
+
+;; Thompson NFA
+;; https://swtch.com/~rsc/regexp/regexp1.html
+
+(coalton-toplevel
+  
+ (define-struct Node
+     (Edges (vec:Vector UFix) ;; list of edge pointers
+            ))
+
+  (define-struct Edge
+    (C Char)     ;; matching char
+    (Target (cell:Cell UFix))  ;; pointer to end node
+    )
+
+  (define-struct NFA
+    (nodestack (vec:Vector Node))
+    (edgestack (vec:Vector Edge)))
+
+  (declare init-env (Unit -> NFA))
+  (define (init-env)
+    "Initializes an environment with one empty node."
+    (NFA (vec:with-initial-element 1 (Node (vec:new)))
+         (vec:new))))
 
 (coalton-toplevel
 
-;;;
-;;; Defining Regular Expressions
-;;;
+  (declare next-node (NFA -> UFix))
+  (define (next-node (NFA nodestack _ ))
+    (vec:length nodestack))
+
+  (declare current-node (NFA -> UFix))
+  (define (current-node (NFA nodestack _ ))
+    (math:1- (vec:length nodestack)))
+
+  (declare push-node (Node -> (state:ST NFA Unit)))
+  (define (push-node node)
+    "Pushes a node onto the nodestack."
+    (do
+     (env <- state:get)
+     (pure (vec:push! node (.nodestack env)))
+      (state:put env)))
+
+  (declare new-node (Unit -> (state:ST NFA Unit)))
+  (define (new-node)
+    "Adds a new empty node to the nodestack."
+    (push-node (Node (vec:new))))
   
-  (define-type Regex
-    (RChar String)
-    (RCat Regex Regex)
-    (RAlt Regex Regex)
-    (RQuest Regex)
-    (RStar Regex)                 
-    (RPlus Regex)
-    (REps))
+  (declare add-node-edge (UFix -> UFix -> (state:ST NFA Unit)))
+  (define (add-node-edge node edge)
+    "Adds an edge pointer to an index node."
+    (do
+     (env <- state:get)
+     (pure (match (vec:find-elem edge (.edges (vec:index-unsafe node (.nodestack env))))
+             ((Some _)
+              Unit)
+             ((None)
+              (vec:push! edge (.edges (vec:index-unsafe node (.nodestack env))))
+              Unit)))
+      (state:put env)))
 
-;;;
-;;; Converting the Regex into an NFA
-;;;
+  (declare add-edge (Edge -> (state:ST NFA Unit)))
+  (define (add-edge edge)
+    "Adds an edge."
+    (do
+     (env <- state:get)
+     (pure (vec:push! edge (.edgestack env)))
+      (state:put env)))
+
+  (declare next-edge (NFA -> UFix))
+  (define (next-edge (NFA _ edgestack))
+    (vec:length edgestack))
+
+  (declare current-edge (NFA -> UFix))
+  (define (current-edge (NFA _ edgestack))
+    (math:1- (vec:length edgestack)))
+
+  (declare set-edge-target (UFix -> UFix -> (state:ST NFA Unit)))
+  (define (set-edge-target edge target)
+    "Sets the target node pointer for a given edge"
+    (do
+     (env <- state:get)
+     (pure (cell:write! (.target (vec:index-unsafe edge (.edgestack env))) target))
+      (state:put env)))
   
-  (define-struct Node
-    (Index UFix)
-    (Out (Cell (List UFix))))
-  
-  (define-struct Edge
-    (Index UFix)
-    (Start UFix)                        ; pointer to starting node
-    (C String)                          ; maybe Regex instead
-    (Dest UFix))                        ; pointer to end node
 
-;;;
-;;; Env for tracking nodes and edges
-;;;
-  
-  (define-struct Env
-    (nodestack (Vector Node))
-    (edgestack (Vector Edge)))
-  
-  (define (init-env)
-    "Initializes the NFA-building environment with two nodes and an edge connecting them."
-    (let e =  (Env
-               (vec:with-initial-element 1 (Node 0 (cell:new (make-list 0))))
-               (vec:with-initial-element 1 (Edge 0 0 "" 1))))
-    (vec:push! (Node 1 (cell:new nil)) (.nodestack e))
-    e)
-
-  
-;;;
-;;; Operations for handling nodes and edges
-;;;
-  
-  (declare last-node (Env -> Node))
-  (define (last-node env)
-    "Returns the last node in the stack."
-    (vec:last-unsafe (.nodestack env)))
-
-  (declare last-node-index (Env -> UFix))
-  (define (last-node-index env)
-    (.index (last-node env)))
-
-  (declare last-edge (Env -> Edge))
-  (define (last-edge env)
-    (vec:last-unsafe (.edgestack env)))
-
-  (declare last-edge-index (Env -> Ufix))
-  (define (last-edge-index env)
-    (.index (last-edge env)))
-
-  (declare add-node (Node -> Env -> Unit))
-  (define (add-node node env)
-    "Adds a new node, replacing a previous version if necessary."
-    (let i = (.index node))
-    (let stack = (.nodestack env))
-    (match (vec:index i  stack)
-      ((Some _n) (vec:set! i node stack))
-      (_None (progn (vec:push! node stack)
-                    Unit))))
-
-  (declare add-next-node (Env -> Unit))
-  (define (add-next-node env)
-    "Adds the next node."
-    (add-node (Node (1+ (.index (vec:last-unsafe (.nodestack env))))
-                    (cell:new Nil)
-                    )
-              env)
-    Unit)
-
-  (declare next-node (Env -> UFix))
-  (define (next-node env)
-    "Adds a new node, returns the index to that node."
-    (add-next-node env)
-    (last-node-index env))
-
-  (declare add-edge-to-node (Edge -> Env -> Unit))
-  (define (add-edge-to-node edge env)
-    "Updates the start node's out-list with this edge's index/pointer."
-    (cell:push! (.out (vec:index-unsafe (.start edge) (.nodestack env))) (.index edge))
-    Unit
-    )
-  (declare add-edge (Edge -> Env -> Unit))
-  (define (add-edge edge env)
-    (vec:push! edge (.edgestack env))
-    (add-edge-to-node edge env))
-
-  ;;
-  ;; NFA Building Algorithm
-  ;;
-  ;; - Start with an env init'd with two nodes and an empty/epsilon
-  ;; edge between them.
-  ;;
-  ;; - Move through the Regex, converting each component into
-  ;; equivalent nodes and edges
-  ;;
-  ;; - ????
-  ;;
-  ;; - Profit/NFA
-  
-  (define (make-NFA regex)
-    "Builds an NFA graph."
-    (let env = (init-env))
-    (let ((f (fn (regex)
-               (match regex
-                 ((RChar s)
-                  (add-edge (Edge (1+ (last-edge-index env))
-                                  (last-node-index env)
-                                  s
-                                  (next-node env))
-                            env))
-                 ((RCat r1 r2)
-                  (progn (f REps)
-                         (f r1)
-                         (f Reps)
-                         (f r2)))
-                 ((RAlt r1 r2)
-                  (let ((lni (last-node-index env)))
-                    (progn (f REps)
-                           (f r1)
-                           (add-edge (Edge (1+ (last-edge-index env))
-                                           lni
-                                           ""
-                                           (next-node env))
-                                     env)
-                           (f r2))))
-                 ((RQuest r)
-                  (f (RAlt r (RChar ""))))
-                 ((RStar r)
-                  (let ((lni (last-node-index env)))
-                    (f REps)
-                    (f r)
-                    (add-edge (Edge (1+ (last-edge-index env))
-                                    (last-node-index env)
-                                    ""
-                                    lni)
-                              env)))
-                 ((RPlus r)
-                  (f r)
-                  (f (RStar r)))
-                 (_REps (f (RChar "")))))))
-      (f regex))
-    env)
-  
   )
 
-;;;
-;;; Matching:
-;;;
-
 (coalton-toplevel
- 
-  ;;
-  ;; Matching algorithm:
-  ;;
 
-  ;; Start at the initial node, with a string buffer:
+  (define-type Regex
+    (RChar Char)
+    (RConcat Regex Regex)
+    (RAlt Regex Regex)
+    (R? Regex)
+    (R* Regex)
+    (R+ Regex)
+    (R. Regex)
+    (REps))
 
-  ;; For each node:
-  ;;
-  ;; - Travel each edge leading from the node, collecting the
-  ;; concatenation of the edge string with the buffer
-  ;;
-  ;; - At each node, compare the buffer with the first buff-length
-  ;;   characters of the string. If it doesn't match, give up on that
-  ;;   branch
-  ;;
-  ;; - If it finds a complete match, return true, otherwise defaults to false in the end
-  ;; 
+  (declare add-char (Char -> (state:ST NFA Unit)))
+  (define (add-char char)
+         (do
+          (env <- state:get)
+          (add-node-edge
+           (current-node env)
+           (next-edge env))
+           (add-edge (Edge char
+                           (cell:new (next-node env))))
+           (new-node)))
 
-  ;; Since this approach uses a print-buffer, the epsilons/empty
-  ;; strings need not be handled separately: concatting null strings
-  ;; won't affect the length of the string!
+  (declare add-concat (Regex -> Regex -> (state:ST NFA Unit)))
+  (define (add-concat regex1 regex2)
+    (do
+     (NFAful regex1)
+     (NFAful regex2)))
+
+  (declare add-alt (Regex -> Regex -> (state:ST NFA Unit)))
+  (define (add-alt regex1 regex2)
+    (do
+     (env <- state:get)
+     (let current = (current-node env))
+      (NFAful regex1)
+      (let REnd = (current-edge env))
+      (pure (vec:pop! (.nodestack env)))
+      (add-node-edge current (next-edge env))
+      (NFAful regex2)
+      
+      (set-edge-target REnd (current-node env))))
+
+  (declare add-* (Regex -> (state:ST NFA Unit)))
+  (define (add-* regex)
+    (do
+     (env <- state:get)
+     (let current = (current-node env))
+      (NFAful regex)
+      (set-edge-target (current-edge env) current)
+      (add-node-edge current (next-edge env))))
+
+  (declare add-? (Regex -> (state:ST NFA Unit)))
+  (define (add-? regex)
+    (do
+     (env <- state:get)
+     (let current = (current-node env))
+      (NFAful regex)
+      (add-node-edge current (next-edge env))))
+
+  (declare add-+ (Regex -> (state:ST NFA Unit)))
+  (define (add-+ regex)
+    (do
+     (env <- state:get)
+     (let current = (current-node env))
+      (NFAful regex)
+      (set-edge-target (current-edge env) current)
+      (add-node-edge current (next-edge env))
+      (NFAful regex)))
+
+  ;; TODO
+  #+inore(define (add.))
   
-  (declare out-edges (Node -> Env -> (List Edge)))
-  (define (out-edges node env)
-    "Collects all of the edges leading from a given node."
-    (map (fn (x)
-           (vec:index-unsafe x (.edgestack env)))
-         (cell:read (.out node))))
+  (declare NFAful (Regex -> (state:ST NFA Unit)))
+  (define (NFAful regex)
+    "Builds an NFA."
+    (match regex
+      ((RChar c)
+       (add-char c))
+      ((RConcat regex1 regex2)
+       (add-concat regex1 regex2))
+      ((RAlt regex1 regex2)
+       (add-alt regex1 regex2))
+      ((R* regex)
+       (add-* regex))
+      ((R? regex)
+       (add-? regex))
+      ((R+ regex)
+       (add-+ regex))
+      (_ (error "not yet"))))
 
-  (declare travel-edge (Edge -> String -> Env -> (Tuple Node String)))
-  (define (travel-edge edge buffer env)
-    "Travels along one edge, advancing the buffer and the current-node"
-    (Tuple (vec:index-unsafe (.dest edge) (.nodestack env))
-           (str:concat buffer (.c edge))))
+  (declare make-nfa (Regex -> NFA))
+  (define (make-nfa regex)
+    (fst (state:run (NFAful regex) (init-env)))))
+
+
+
+;; break input into iterator of chars
+#+i(coalton-toplevel
+
+  (declare traverse-edge (Char -> UFix -> (state:ST NFA Boolean)))
+  (define (traverse-edge char edge)
+    (do
+     (env <- state:get)
+     (let e = (vec:index-unsafe edge (.edgestack env)))
+      (if (== char (.c e))
+          (traverse-edges (.target e))
+            (pure False))))
+
+  (declare traverse-edges (Char -> UFix -> (state:ST NFA Boolean)))
+  (define (traverse-edges char node)
+    "Traverses all edges leading from a node."
+    (do
+     (env <- state:get)
+     (let n = (vec:index-unsafe node (.nodestack env)))
+      (if (vec:empty? (.edges n))
+          (pure True)
+          (for e in (.edges n)
+               (traverse-edge e)))))
   
   (define (rmatch regex string)
-    "Checks whether a string satisfies a regex."
     (let nfa = (make-NFA regex))
-    (let ismatch = (Cell:new False))
-    (let ((f (fn (current-node string buffer)
-               (cond
-                 ((== string buffer)
-                  (cell:Write! ismatch True)
-                  Unit)
-                 ((>= (str:length buffer) (str:length string))
-                  Unit)
-                 ((== buffer
-                      (fst (str:split (str:length buffer) string)))
-                  (iter:for-each! (fn (x)
-                                    (let ((te (travel-edge x buffer nfa)))
-                                      (f (fst te) string (snd te)))
-                                    Unit)
-                                  (iter:into-iter (out-edges current-node nfa))))
-                 (True Unit)))))
-      (f (vec:head-unsafe (.nodestack nfa))
-         (match string
-           ("" (error "I'm afraid you've supplied an empty string."))
-           (_ string))
-         ""))
-    (cell:read ismatch)))
+    (let s = (str:chars string))
+    
+    ())
+  )
+
+
+#+sb-package-locks
+(sb-ext:lock-package "COALTON-LIBRARY/REGEX")
