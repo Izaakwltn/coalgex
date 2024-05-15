@@ -9,26 +9,7 @@
 ;;;; You should have received a copy of the GNU General Public License along with Coalgex. If not, see <https://www.gnu.org/licenses/>. 
 ;;;;
 
-(defpackage #:coalgex
-  (:use #:coalton
-        #:coalton-prelude)
-  
-  (:local-nicknames
-   (#:str #:coalton-library/string)
-   (#:char #:coalton-library/char)
-   (#:iter #:coalton-library/iterator)
-   (#:vec #:coalton-library/vector)
-   (#:cell #:coalton-library/cell)
-   (#:list #:coalton-library/list))
-  
-  (:export
-   ;; Regex Type Constructors
-   #:RChar
-   #:RCat
-   #:RAlt
-   #:RStar
-   #:RPlus
-   #:REps
-   ;; Top-level functions
-   #:make-NFA
-   #:rmatch))
+(uiop:define-package #:coalgex
+  (:mix-reexport
+   #:coalgex/parse
+   #:coalgex/nfa))

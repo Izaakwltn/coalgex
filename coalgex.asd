@@ -14,6 +14,8 @@
   :description "A Simple Implementation of a Regex NFA in Coalton."
   :depends-on (#:coalton #:fiasco)
   :serial t
-  :components ((:file "package")
-               (:file "nfa")
-               (:file "tests")))
+  :components ((:module "src"
+                        :serial t
+                :components ((:file "parse")
+                             (:file "nfa")
+                             (:file "package")))))

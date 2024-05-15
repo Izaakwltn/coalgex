@@ -1,23 +1,23 @@
-(defpackage #:coalgex (:use
+(defpackage #:coalgex/nfa
+  (:use
    #:coalton
-   #:coalton-prelude)
+   #:coalton-prelude
+   #:coalgex/parse)
   (:local-nicknames (#:vec #:coalton-library/vector)
                     (#:cell #:coalton-library/cell)
                     (#:state #:coalton-library/monad/state)
                     (#:math #:coalton-library/math)
                     (#:str #:coalton-library/string)
-                    (#:list #:coalton-library/list))
-  ;(:export)
-  )
+                    (#:list #:coalton-library/list)))
 
-(in-package #:coalgex)
+(in-package #:coalgex/nfa)
 
 (named-readtables:in-readtable coalton:coalton)
 
 #+coalton-release
 (cl:declaim #.coalton-impl/settings:*coalton-optimize-library*)
 
-;; first step is building the regex nfa
+;; first step is translating the regex into an nfa
 ;; this should be a structure of nfa nodes which can be traversed to verify the matching
 
 ;; Thompson NFA
@@ -32,9 +32,8 @@
   (define-type Edge
     "An NFA Edge, either a character for matching or an empty edge. "
     (EChar Char (Cell Ufix))
-    (EAny (Cell UFix))
-    ;(ENull (Cell UFix))
-    )
+    (ECharset (List Char) (Cell UFix))
+    (EAny (Cell UFix)))
 
   (define-struct NFA
     "An NFA graph consisting of nodes and edges."
@@ -140,15 +139,6 @@
 
 (coalton-toplevel
 
-  (define-type Regex
-    (RChar Char)
-    (RConcat Regex Regex)
-    (RAlt Regex Regex)
-    (R? Regex)
-    (R* Regex)
-    (R+ Regex)
-    (R.))
-
   (declare add-char (Char -> (state:ST NFA Unit)))
   (define (add-char char)
     "Adds a character edge to the NFA."
@@ -161,6 +151,17 @@
                        (cell:new (next-node env))))
       (new-node)))
 
+  (declare add-charset ((List Char) -> (state:ST NFA Unit)))
+  (define (add-charset chars)
+    (do
+     (env <- state:get)
+     (add-node-edge
+      (current-node env)
+      (next-edge env))
+      (add-edge (ECharset chars
+                          (cell:new (next-node env))))
+      (new-node)))
+
   (declare add-any (Unit -> (state:ST NFA Unit)))
   (define (add-any)
     "Adds an edge matching any character to the NFA."
@@ -170,17 +171,6 @@
       (current-node env)
       (next-edge env))
       (add-edge (EAny (cell:new (next-node env))))
-      (new-node)))
-
-  ;(declare add-null (Unit -> (state:ST NFA Unit)))
-  #+ig(define (add-null)
-    "Adds an edge matching any character to the NFA."
-    (do
-     (env <- state:get)
-     (add-node-edge
-      (current-node env)
-      (next-edge env))
-      (add-edge (ENull (cell:new (next-node env))))
       (new-node)))
   
   (declare add-concat (Regex -> Regex -> (state:ST NFA Unit)))
@@ -192,6 +182,7 @@
 
   (declare add-alt (Regex -> Regex -> (state:ST NFA Unit)))
   (define (add-alt regex1 regex2)
+    "Adds an alternative path."
     (do
      (env <- state:get)
      (let current = (current-node env))
@@ -239,6 +230,8 @@
     (match regex
       ((RChar c)
        (add-char c))
+      ((RCharset cs)
+       (add-charset cs))
       ((R.)
        (add-any))
       ((RConcat regex1 regex2)
@@ -302,9 +295,9 @@
              ((Node edges)
               edges)))))
 
-  ;;;
-  ;;;
-  ;;;
+;;;
+;;;
+;;;
   
   (declare traverse-edge (UFix -> UFix -> (state:ST TraverseState Boolean)))
   (define (traverse-edge edge-ptr char-ptr)
@@ -321,8 +314,25 @@
             (if (== c x)
                 (traverse-node (cell:read targ) (1+ char-ptr))
                 (pure False)))
+           ((ECharset cs targ)
+            (cond ((list:member x cs)
+                   (traverse-node (cell:read targ) (1+ char-ptr)))
+                  (True
+                   (pure False))))
            ((EAny targ)
             (traverse-node (cell:read targ) (1+ char-ptr))))))))
+
+  (declare traverse-edges ((List UFix) -> UFix -> (state:ST TraverseState Boolean)))
+  (define (traverse-edges edge-ptrs char-ptr)
+    "Recursively traverses edges"
+    (cond ((list:null? edge-ptrs)
+           (pure False))
+          (True
+           (do
+            (probe <- (traverse-edge (list:car edge-ptrs) char-ptr))
+            (if probe
+                (pure True)
+                (traverse-edges (list:cdr edge-ptrs) char-ptr))))))
 
   (declare traverse-node (UFix -> UFix -> (state:ST TraverseState Boolean)))
   (define (traverse-node node-ptr char-ptr)
@@ -333,164 +343,12 @@
       (let empty-string = (match char
                             ((None)
                              True)
-                            ((Some x)
+                            ((Some _)
                              False)))
       (if (and (vec:empty? edges)
                empty-string)
           (pure True)
-          (while (not (vec:empty? edges))
-            (do
-             (m? <- (traverse-edge (unwrap (vec:pop! edges)) char-ptr))
-             (cond (m?
-                    (pure True)))))
-          ;; not for, or iter-for-each! or map... I need each of these to happen independently 
-  #+ig        (pure (map (fn (e)
-                       (do
-                        (m? <- (traverse-edge e char-ptr))))
-                     edges))
-#+ig          (let ((match? (cell:new False)))
-            (pure (map (fn (e)))) (for e in edges
-                                       (do 
-                                        (m? <- (traverse-edge e char-ptr))
-                                        (pure (cell:write! match? m?))))
-            (match match?) (pure (cell:Read match?))))))
+          (traverse-edges (the (List UFix) (into edges)) char-ptr))))
 
-  #+ig(define (get-current-node)
-        "Returns the current-node."
-        (do
-         (state <- state:get)
-         (get-node (cell:read (.current-node state)))))
-
-  #+ig(declare set-current-node (UFix -> (state:ST TraverseState Unit)))
-  #+ig(define (set-current-node ptr)
-        "Sets the current NFA node."
-        (do
-         (state <- state:get)
-         (pure (cell:write! (.current-node state) ptr))
-          (pure Unit)))
-  
-;;;;;; I don't think advancing the string is right because that shouldn't be global state
-
- ; (declare traverse-edge (UFix -> (state:ST TraverseState Boolean)))
- #+ig (define (traverse-edge ptr)
-    (do
-     (first-char <- (first-char))
-     (match first-char
-       ((None)
-        (pure True))
-       ((Some x)
-        (match edge
-          ((EChar c targ)))
-        )
-       )
-      (edge <- (get-edge ptr))
-      (match edge
-        ((EChar c targ)
-         ))))
-  
-                                        ;(declare traverse-node (Unit -> (state:ST TraverseState )))
-  #+ig(define (traverse-node)
-        (do
-         (node <- (get-current-node))
-         (traverse))
-        )
-  )
-
-
-;; I don't know if I need this step...
-#+ig(coalton-toplevel
-
-  (define-struct DFAState
-    "A State struct for handling NFA->DFA conversion."
-    (DFA NFA)
-    (NFA NFA)
-    (Current-NFA-Node (Cell UFix)))
-  
-  (declare get-node (UFix -> (state:ST DFAState Node)))
-  (define (get-node index)
-    "Gets the indexth node in the NFA nodestack."
-    (do
-     (state <- state:get)
-     (pure (vec:index-unsafe index (.nodestack (.NFA state))))))
-
-  (declare get-edge (UFix -> (state:ST DFAState Edge)))
-  (define (get-edge index)
-    "Gets the indexth edge in the NFA nodestack."
-    (do
-     (state <- state:get)
-     (pure (vec:index-unsafe index (.edgestack (.NFA state))))))
-
-  (declare first-node (Unit -> (state:ST DFAState Node)))
-  (define (first-node)
-    "Gets the first node in the NFA."
-    (get-node 0))
-
-  (define (get-current-node)
-    "Returns the current-node."
-    (do
-     (state <- state:get)
-     (get-node (cell:read (.current-NFA-Node state)))))
-
-  (declare set-current-node (UFix -> (state:ST DFAState Unit)))
-  (define (set-current-node ptr)
-    "Sets the current NFA node."
-    (do
-     (state <- state:get)
-     (pure (cell:write! (.current-NFA-Node state) ptr))
-      (pure Unit)))
-
-  ;; so first 
-  (declare epsilon-closure (Unit -> (State DFAState Unit)))
-  (define (epsilon-closure)
-    ())
-                                        ;(declare DFAful (NFA -> (state:ST NFA Unit)))
-  #+ig(define (DFAful nfa)
-        ()
-    
-        )
-  
-                                        ;  (declare NFA->DFA (NFA -> NFA))
-  #+ig  (define (NFA->DFA (NFA nodestack edgestack))
-          (fst (state:run (DFAful nfa)
-                          (init-env)))))
-
-;; write regex parser, starting with tokeni
-
-;; functions for printing
-
-;; break input into iterator of chars
-#+ig(coalton-toplevel
-
-  (define-class traverse-state
-    (Current-node UFix)
-    (Current-edge UFix)) ;; for tracking the state 
-  
-  (declare traverse-edge (Char -> UFix -> (state:ST NFA Boolean)))
-  (define (traverse-edge char edge)
-    (do
-     (env <- state:get)
-     (let e = (vec:index-unsafe edge (.edgestack env)))
-      (if (== char (.c e))
-          (traverse-edges (get-edge-target e))
-          (pure False))))
-
-  (declare traverse-edges (Char -> UFix -> (state:ST NFA Boolean)))
-  (define (traverse-edges char node)
-    "Traverses all edges leading from a node."
-    (do
-     (env <- state:get)
-     (let n = (vec:index-unsafe node (.nodestack env)))
-      (if (vec:empty? (.edges n))
-          (pure True)
-          (for e in (.edges n)
-               (traverse-edge e)))))
-  
-  (define (rmatch regex string)
-    (let nfa = (make-NFA regex))
-    (let chars = (str:chars string))
-    (for c in chars))
-  )
-
-
-#+sb-package-locks
-(sb-ext:lock-package "COALTON-LIBRARY/REGEX")
+  (define (rmatch match-string regex)
+    (snd (state:run (traverse-node 0 0) (TraverseState match-string (make-nfa regex))))))
