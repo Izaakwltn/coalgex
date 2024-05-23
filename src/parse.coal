@@ -1,29 +1,45 @@
-;;;;
-;;;;
-;;;;
-
-;; parsing regex strings into regex objects
-
-(defpackage #:coalgex/parse
-  (:use #:coalton
-        #:coalton-prelude)
-  (:local-nicknames (#:vec #:coalton-library/vector)
-                    (#:cell #:coalton-library/cell)
-                    (#:str #:coalton-library/string))
-  (:export
-   #:Regex
-   #:RChar
-   #:RCharset
-   #:RConcat
-   #:RAlt
-   #:R?
-   #:R*
-   #:R+
-   #:R.)
-  )
+(cl:defpackage #:coalgex/parse
+    (:use #:coalton
+          #:coalton-prelude)
+    (:local-nicknames (#:vec #:coalton-library/vector)
+                      (#:cell #:coalton-library/cell)
+                      (#:str #:coalton-library/string))
+    (:export
+     #:Regex
+     #:RChar
+     #:RCharset
+     #:RConcat
+     #:RAlt
+     #:R?
+     #:R*
+     #:R+
+     #:R.))
+  (cl:in-package coalgex/parse)
 
 
-(in-package #:coalgex/parse)
+#+ig
+(lisp Unit ()
+  (cl:defpackage #:coalgex/parse
+    (:use #:coalton
+          #:coalton-prelude)
+    (:local-nicknames (#:vec #:coalton-library/vector)
+                      (#:cell #:coalton-library/cell)
+                      (#:str #:coalton-library/string))
+    (:export
+     #:Regex
+     #:RChar
+     #:RCharset
+     #:RConcat
+     #:RAlt
+     #:R?
+     #:R*
+     #:R+
+     #:R.))
+  (cl:in-package coalgex/parse)
+)
+
+
+
 
 (coalton-toplevel
 

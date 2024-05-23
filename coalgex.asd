@@ -12,10 +12,11 @@
 (asdf:defsystem :coalgex
   :author "Izaak Walton <iwalton.ven@hrl.com"
   :description "A Simple Implementation of a Regex NFA in Coalton."
-  :depends-on (#:coalton #:fiasco)
+  :defsystem-depends-on (#:coalton)
+  :depends-on (#:fiasco)
   :serial t
   :components ((:module "src"
-                        :serial t
-                :components ((:file "parse")
-                             (:file "nfa")
-                             (:file "package")))))
+                :serial t
+                :components ((:coalton-file "parse")
+                             #+ig(:coalton-file "nfa")
+                             #+ig(:file "package")))))

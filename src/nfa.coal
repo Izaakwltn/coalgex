@@ -1,16 +1,17 @@
-(defpackage #:coalgex/nfa
-  (:use
-   #:coalton
-   #:coalton-prelude
-   #:coalgex/parse)
-  (:local-nicknames (#:vec #:coalton-library/vector)
-                    (#:cell #:coalton-library/cell)
-                    (#:state #:coalton-library/monad/state)
-                    (#:math #:coalton-library/math)
-                    (#:str #:coalton-library/string)
-                    (#:list #:coalton-library/list)))
+(lisp Unit ()
+  (cl:defpackage #:coalgex/nfa
+    (:use
+     #:coalton
+     #:coalton-prelude
+     #:coalgex/parse)
+    (:local-nicknames (#:vec #:coalton-library/vector)
+                      (#:cell #:coalton-library/cell)
+                      (#:state #:coalton-library/monad/state)
+                      (#:math #:coalton-library/math)
+                      (#:str #:coalton-library/string)
+                      (#:list #:coalton-library/list)))
 
-(in-package #:coalgex/nfa)
+(package #:coalgex/nfa)
 
 (named-readtables:in-readtable coalton:coalton)
 
