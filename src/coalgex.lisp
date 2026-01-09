@@ -5,7 +5,8 @@
   (:local-nicknames
    (#:vec #:coalton-library/vector)
    (#:iter #:coalton-library/iterator)
-   (#:str  #:coalton-library/string)))
+   (#:str  #:coalton-library/string)
+   (#:list #:coalton-library/list)))
 
 (in-package #:coalgex)
 
@@ -19,14 +20,25 @@
 
 (coalton-toplevel
   (define-type (Edge :a)
-    (Edge :a (State :a))
-    (EAny (State :a))
-    (EEpsilon (State :a)))
+    ($match :a (State :a))
+    ($Not (State :a))
+    ($Any (State :a))
+    ($Empty (State :a)))
+
+  (define (edge-target edge)
+    (match edge
+      (($Match _ s)
+       s)
+      (($Not s)
+       s)
+      (($Any s)
+       s)
+      (($Empty s)
+       s)))
 
   (define-type (State :a)
     (State (Vector (Edge :a)))
-    (Accepting (Vector (Edge :a)))
-    )
+    (Accepting (Vector (Edge :a))))
 
   (define (edges state)
     (match state
@@ -63,21 +75,40 @@
   (define (match-edge input edge)
     "Match the value of an edge against an input."
     (match edge
-      ((Edge val _state)
+      (($Match val _state)
        (%match val input))
+      ;; Add negation rules
       (_ True)))
   
   (declare transition (Transitionable :a
 				      => State :a
 				      -> :a
-				      -> (Optional (State :a))))
+				      -> (Optional (Vector (State :a)))))
   (define (transition state input)
-    "This moves to the first possible state, returning `None` if there are no matching states."
-    (let ((targets (iter:into-iter (edges state))))
-      (match (iter:find! (match-edge input) targets)
-	((Some (Edge _val stat))
-	 (Some stat))
-	(_ None)))))
+    (let ((valid-states (vec:new)))
+      (for edge in (edges state)
+	(when (match-edge input edge)
+	    (vec:push! (edge-target edge) valid-states)
+	    Unit))
+      (if (zero? (vec:length valid-states))
+	  None
+	  (Some valid-states)))))
+
+;; transition should take a vector of states
+
+(coalton-toplevel
+  (declare transition (Transitionable :a
+				      => (Vector (State :a))
+				      -> :a
+				      -> (Vector (state :a))))
+  (define (transition states input)
+    (let ((valid-states (vec:new)))
+      (for state in states
+	(for edge in (edges state)
+	  (when (match-edge input edge)
+	    (vec:push! (edge-target edge) valid-states)
+	    Unit)))
+      valid-states)))
 
 (coalton-toplevel
 
@@ -85,70 +116,111 @@
 
   (declare %is ((Transitionable :a) => :a -> (State :a)))
   (define (%is val)
+    ;; this is the only one that should process anything but states
     (State (vec:make
-	    (Edge val (Accepting (vec:new))))))
+	    ($Match val (Accepting (vec:new))))))
   
   (declare %any (Unit -> State :a))
   (define (%any)
-    (State (vec:make (EAny (Accepting (vec:new))))))
+    (State (vec:make ($Any (Accepting (vec:new))))))
 
-  (declare %union ((State :a) -> (State :a) -> (State :a)))
-  (define (%union in1 in2)
+  (declare %empty (Unit -> State :a))
+  (define (%empty)
+    (State (vec:make ($Empty (Accepting (vec:new))))))
+
+  (declare %concat (State :a -> State :a -> State :a))
+  (define (%concat st1 st2)
+    (match st1
+      ((State es)
+       (State (map (fn (edge)
+		     (match edge
+		       (($Not st)
+			($Not (%concat st st2)))
+		       (($Match x st)
+			($Match x (%concat st st2)))
+		       (($Any st)
+			($Any (%concat st st2)))
+		       (($Empty st)
+			($Empty (%concat st st2)))))
+		   es)))
+      ((Accepting _es)
+       st2)))
+  
+  (declare %union (State :a -> State :a -> State :a))
+  (define (%union st1 st2)
     (let ((end-state (Accepting (vec:new))))
-      (State (vec:make
-	      (Edge in1 end-state)
-	      (Edge in2 end-state)))))
+      (State (vec:make ($Empty (%concat st1 end-state))
+		       ($Empty (%concat st2 end-state))))))
 
-  (declare %concat (:a -> :a -> (State :a)))
-  (define (%concat in1 in2)
-    (State (vec:make
-	    (Edge
-	     in1
-	     (State (vec:make
-		     (Edge
-		      in2
-		      (State (vec:new)))))))))
+  (declare %star (State :a -> State :a))
+  (define (%star st)
+    (%union (Accepting (vec:new))
+	    (%concat st
+		     (%union
+		      (%empty)
+		      (%concat (%empty) st))))))
 
-  #+ig  (define (string->dfa str)
-	  (let ((build (fn (chars)
-			 (match chars
-			   ((Cons c cs)
-			    (State (vec:make
-				    (Edge c (build cs)))))
-			   ((Nil)
-			    (State (vec:new)))))))
-	    (build (into str)))
-	  ()
-	  (iter:mconcat! %concat "" (chars str))))
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (coalton-toplevel
+  (declare %match-nfa ((Transitionable :a) => (Vector (State :a)) -> (list :a) -> (Vector (State :a))))
+  (define (%match-nfa states input)
+    (match input
+      ((Cons x xs)
+       (%match-nfa
+	(transition states x)
+	xs))
+      ((Nil)
+       states)))
 
-  (define (%or))
+  (declare match-nfa ((Transitionable :a) => (State :a) -> (list :a) -> Boolean))
+  (define (match-nfa start-state input)
+    (match (iter:find! (fn (x)
+			 (match x
+			   ((Accepting _)
+			    True)
+			   (_
+			    False)))
+		       (iter:into-iter (%match-nfa (vec:make start-state) input)))
+      ((Some _)
+       True)
+      ((None)
+       False)))
 
-  (declare build-string-match-dfa (String -> (State Char)))
-  (define (build-string-match-dfa str)
-    (let ((build (fn (chars)
-		   (match chars
-		     ((Cons c cs)
-		      (State (vec:make
-			      (Edge c (build cs)))))
+  (define (match-string start-state str)
+    (match-nfa start-state (the (List Char) (into str)))))
+
+
+;; so first, build the nfa, then use the transition function to check
+
+;; when input runs out/there isn't a match, as long as one of the transition states is accepting it's a sucess
+
+;;;;;;;;;;;;;;;
+
+;;;;;;;;;;;;;;;
+
+
+(coalton-toplevel
+
+  (declare remove-empty-edges )
+  (define (remove-empty-edges state)
+    (edges state))
+
+  (declare nfa-builder (String -> (State Char)))
+  (define (nfa-builder regex-string)
+    "PERL style"
+    (let ((build (fn (input)
+		   (match input
+		     ((cons x xs)
+		      (match x
+			;; If it's escaped, skip it
+			(#\\
+			 (%concat (%is (list:car xs))
+				  (build (list:cdr xs))))
+			;; Add special characters here
+			(_ (%concat (%is x) (build xs)))))
 		     ((Nil)
-		      (State (vec:new)))))))
-      (build (into str))))
-
-  
-  (define other-example (State (vec:make (Edge 0 (State (vec:new)))
-					 (Edge 1 (State (vec:make (Edge 3 (State (vec:new)))))))))
-
-  
-  (define example-dfa
-    (State
-     (vec:make
-      (Edge 0 (State (vec:new)))
-
-      (Edge 1 (State
-	       (vec:make
-		(Edge 2 (State (vec:new)))
-		(Edge 3 (State (vec:new))))))))))
+		      (%empty))))))
+      (build (the (List Char) (into regex-string))))))
