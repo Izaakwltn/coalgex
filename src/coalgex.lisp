@@ -51,6 +51,10 @@
     ""
     (%match (:a -> :a -> boolean)))
 
+  (declare match-range ((Eq :a) (Transitionable :a) => :a -> (List :a) -> boolean))
+  (define (match-range input range)
+    (list:member input range))
+
   (%define-eq-transitionable-instance Integer)
   (%define-eq-transitionable-instance IFix)
   (%define-eq-transitionable-instance UFix)
@@ -271,7 +275,6 @@ $   Match the end of the string                  Not in [], but can
     <LeftCurly
     <RightCurly)
 
-  
   (define (tokenize regex-string)
     "Returns a tokenized list of regex characters."
     (map (fn (c)
