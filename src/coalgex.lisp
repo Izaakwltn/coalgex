@@ -80,16 +80,17 @@
       ;; Add negation rules
       (_ True)))
   
-  (declare transition (Transitionable :a
+  
+  #+ig(declare transition (Transitionable :a
 				      => State :a
 				      -> :a
 				      -> (Optional (Vector (State :a)))))
-  (define (transition state input)
+  #+ig(define (transition state input)
     (let ((valid-states (vec:new)))
       (for edge in (edges state)
 	(when (match-edge input edge)
-	    (vec:push! (edge-target edge) valid-states)
-	    Unit))
+	  (vec:push! (edge-target edge) valid-states)
+	  Unit))
       (if (zero? (vec:length valid-states))
 	  None
 	  (Some valid-states)))))
@@ -97,6 +98,7 @@
 ;; transition should take a vector of states
 
 (coalton-toplevel
+  ;; transition should be generalized to take either a dfa state or an nfa state- dfa would take a 
   (declare transition (Transitionable :a
 				      => (Vector (State :a))
 				      -> :a
@@ -105,7 +107,11 @@
     (let ((valid-states (vec:new)))
       (for state in states
 	(for edge in (edges state)
-	  (when (match-edge input edge)
+	  (when (or (match edge
+		      (($Empty _)
+		       True)
+		      (_ False))
+		    (match-edge input edge))
 	    (vec:push! (edge-target edge) valid-states)
 	    Unit)))
       valid-states)))
@@ -149,8 +155,12 @@
   (declare %union (State :a -> State :a -> State :a))
   (define (%union st1 st2)
     (let ((end-state (Accepting (vec:new))))
-      (State (vec:make ($Empty (%concat st1 end-state))
-		       ($Empty (%concat st2 end-state))))))
+      (State (vec:make ($Empty (%concat st1
+					(%concat (%empty)
+						 end-state)))
+		       ($Empty (%concat st2
+					(%concat (%empty)
+						 end-state)))))))
 
   (declare %star (State :a -> State :a))
   (define (%star st)
@@ -165,7 +175,11 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (coalton-toplevel
-  (declare %match-nfa ((Transitionable :a) => (Vector (State :a)) -> (list :a) -> (Vector (State :a))))
+
+  (declare %match-nfa ((Transitionable :a) =>
+		       (Vector (State :a))
+		       -> (list :a)
+		       -> (Vector (State :a))))
   (define (%match-nfa states input)
     (match input
       ((Cons x xs)
@@ -204,11 +218,84 @@
 
 (coalton-toplevel
 
-  (declare remove-empty-edges )
-  (define (remove-empty-edges state)
-    (edges state))
+  #+ig"           PURPOSE                                  WHERE
+\   Escape the next character                    Always, except when
+                                                 escaped by another \
+^   Match the beginning of the string            Not in []
+      (or line, if /m is used)
+^   Complement the [] class                      At the beginning of []
+.   Match any single character except newline    Not in []
+      (under /s, includes newline)
+$   Match the end of the string                  Not in [], but can
+      (or before newline at the end of the       mean interpolate a
+      string; or before any newline if /m is     scalar
+      used)
+|   Alternation                                  Not in []
+()  Grouping                                     Not in []
+[   Start Bracketed Character class              Not in []
+]   End Bracketed Character class                Only in [], and
+                                                   not first
+*   Matches the preceding element 0 or more      Not in []
+      times
++   Matches the preceding element 1 or more      Not in []
+      times
+?   Matches the preceding element 0 or 1         Not in []
+      times
+{   Starts a sequence that gives number(s)       Not in []
+      of times the preceding element can be
+      matched
+{   when following certain escape sequences
+      starts a modifier to the meaning of the
+      sequence
+}   End sequence started by {
+-   Indicates a range                            Only in [] interior
+#   Beginning of comment, extends to line end    Only with /x modifier"
+  ;; nfa builder should probably tokenize first
 
-  (declare nfa-builder (String -> (State Char)))
+  (define-type regex-token
+    (<Char Char)
+    <Backslash
+    <ForwardSlash
+    <Dot
+    <Dollar
+    <Caret
+    <Star
+    <Plus
+    <Minus
+    <Question
+    <Vertical
+    <LeftParen
+    <RightParen
+    <LeftBracket
+    <RightBracket
+    <LeftCurly
+    <RightCurly)
+
+  
+  (define (tokenize regex-string)
+    "Returns a tokenized list of regex characters."
+    (map (fn (c)
+	   (match c
+	     (#\\ <BackSlash)
+	     (#\/ <ForwardSlash)
+	     (#\. <Dot)
+	     (#\$ <Dollar)
+	     (#\^ <Caret)
+	     (#\* <Star)
+	     (#\+ <Plus)
+	     (#\? <Question)
+	     (#\- <Minus)
+	     (#\| <Vertical)
+	     (#\( <LeftParen)
+	     (#\) <RightParen)
+	     (#\[ <LeftBracket)
+	     (#\] <RightBracket)
+	     (_ (<Char c))))
+	 (the (List Char) (into regex-string))))
+
+  ;; take the tokens and group into their relevant groups- infix for union, prefix for brackets, postfix for others.
+  
+  (declare nfa-builder (String -> (Vector (State Char))))
   (define (nfa-builder regex-string)
     "PERL style"
     (let ((build (fn (input)
@@ -223,4 +310,4 @@
 			(_ (%concat (%is x) (build xs)))))
 		     ((Nil)
 		      (%empty))))))
-      (build (the (List Char) (into regex-string))))))
+      (vec:make (build (the (List Char) (into regex-string)))))))
