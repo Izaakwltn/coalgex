@@ -118,7 +118,7 @@
     "Transition the NFA from one set of current states to the next."
     (let ((valid-states (vec:new)))
       (for state in states
-	(for edge in (edges state)
+	(for edge in (nfa-edges state)
 	  (match edge
 	    (($empty target)
 	     ;; Skip empty edges

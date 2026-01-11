@@ -104,34 +104,40 @@ $   Match the end of the string                  Not in [], but can
     (pointer (Cell UFix))
     (stack (Vector (nfa:NFA Char))))
 
-  (define (make-builder string)
+  (define (make-builder str)
     (NFABuilder (the (Vector Char)
-		     (into (the (List Char) (into regex-string))))
+		     (into (the (List Char) (into str))))
 		(cell:new 0)
 		(vec:new)))
 
+  (declare next-input! (NFABuilder -> Char))
   (define (next-input! (NFABuilder input pointer _stack))
-    (vec:index-unsafe (cell:read pointer)
-		      input))
+    (let ((next (vec:index-unsafe (cell:read pointer)
+				  input)))
+      (cell:increment! pointer)
+      next))
 
-  (define (push-to-stack! value (NFABuilder _input _pointer stack))
-    (vec:push! value stack))
-
-  (define (pointer++ (NFABuilder _input pointer _stack))
-    (cell:increment! pointer))
-  ;; every char, either
+  (declare push-to-stack! ((nfa:NFA Char) -> NFABuilder -> NFABuilder))
+  (define (push-to-stack! value builder)
+    (match builder
+      ((NFABuilder _input _pointer stack)
+       (vec:push! value stack)))
+    builder)
 
   (declare escape (NFABuilder -> NFABuilder))
   (define (escape builder)
     (push-to-stack! (nfa:%is (next-input! builder))
-		    builder)
-    (pointer++ builder)
-    builder)
+		    builder))
 
   (declare consume (NFABuilder -> NFABuilder))
   (define (consume builder)
-    (match (next-input! builder)
-      (#\\ (escape builder)))
+    (let ((input (next-input! builder)))
+      (match input
+	(#\\ (escape builder))
+	;(#\[) make range
+	
+	(_
+	 (push-to-stack! (nfa:%is input) builder))))
     )
   
   #+ig(define (build-nfa regex-string)
